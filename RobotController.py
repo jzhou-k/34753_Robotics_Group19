@@ -2,10 +2,12 @@ import time
 import numpy as np
 from math import pi
 import math
+import matplotlib.pyplot as plt
 from dynamixel_sdk import PortHandler, PacketHandler
 
 class RobotController:
-    def __init__(self, DEVICENAME="/dev/ttyUSB0",
+    def __init__(self, debug=False,
+                 DEVICENAME="/dev/ttyUSB0",
                  PROTOCOL_VERSION=1.0,
                  BAUDRATE=1000000,
                  ADDR_MX_TORQUE_ENABLE=64,
@@ -14,16 +16,6 @@ class RobotController:
                  TORQUE_ENABLE=1,
                  TORQUE_DISABLE=0,
                  motor_ids=[1, 2, 3, 4]):
-        # Initialize PortHandler instance
-        # Set the port path
-        # Get methods and members of PortHandlerLinux or PortHandlerWindows
-        self.portHandler = PortHandler(DEVICENAME)
-
-        # Initialize PacketHandler instance
-        # Set the protocol version
-        # Get methods and members of Protocol1PacketHandler or Protocol2PacketHandler
-        self.packetHandler = PacketHandler(PROTOCOL_VERSION)
-
         self.ADDR_MX_TORQUE_ENABLE = ADDR_MX_TORQUE_ENABLE
         self.ADDR_MX_GOAL_POSITION = ADDR_MX_GOAL_POSITION
         self.ADDR_MX_PRESENT_POSITION = ADDR_MX_PRESENT_POSITION
@@ -34,10 +26,40 @@ class RobotController:
         self.joint_limits = [-130, 130, -180, 0, -100, 100, -100, 100]
 
         self.dh_params = np.array([[0.05, 0, -0.5*pi, 0],
-                          [0, 0.093, 0, 0],
-                          [0, 0.093, 0, 0],
-                          [0, 0.05, 0, 0],
-                          ])
+                                   [0, 0.093, 0, 0],
+                                   [0, 0.093, 0, 0],
+                                   [0, 0.05, 0, 0],
+                                   ])
+        
+        if debug:
+            print("RobotController initialized in debug mode.")
+            
+            plt.ion()  # Turn on interactive mode
+            self.fig = plt.figure()
+            self.ax = self.fig.add_subplot(111, projection='3d')
+            self.link_plot, = self.ax.plot([], [], [], 'o-', linewidth=3, markersize=8, color='royalblue', label='Robot Links')
+            self.ee_plot = self.ax.scatter([], [], [], color='red', s=100, label='End-Effector')
+            self.ax.set_xlim(-0.2, 0.2)
+            self.ax.set_ylim(-0.2, 0.2)
+            self.ax.set_zlim(-0.2, 0.2)
+            self.ax.set_xlabel('X')
+            self.ax.set_ylabel('Y')
+            self.ax.set_zlabel('Z')
+            self.ax.set_title('Robot Visualization')
+            self.ax.legend()
+            plt.show()
+
+            return
+        
+        # Initialize PortHandler instance
+        # Set the port path
+        # Get methods and members of PortHandlerLinux or PortHandlerWindows
+        self.portHandler = PortHandler(DEVICENAME)
+
+        # Initialize PacketHandler instance
+        # Set the protocol version
+        # Get methods and members of Protocol1PacketHandler or Protocol2PacketHandler
+        self.packetHandler = PacketHandler(PROTOCOL_VERSION)
 
         # Open port
         if self.portHandler.openPort():
@@ -185,19 +207,24 @@ class RobotController:
         return T
     
     def forward(self, joint_angles):
-        """Compute forward kinematics for given joint angles (deg). Returns end-effector position [x,y,z]."""
+        """
+        Compute forward kinematics for given joint angles (deg).
+        Returns a list of joint positions [[x0,y0,z0], [x1,y1,z1], ..., [xe,ye,ze]].
+        """
         if len(joint_angles) != len(self.motor_ids):
             raise ValueError("Length of joint_angles must match number of motors.")
         
         T = np.eye(4)
+        joint_positions = [T[0:3, 3].copy()]  # start with base position
+        
         for i, angle in enumerate(joint_angles):
             theta = math.radians(angle)  # Convert to radians
             d, a, alpha, _ = self.dh_params[i]
             A_i = self.make_DH_matrix(d, a, alpha, theta)
             T = np.dot(T, A_i)
+            joint_positions.append(T[0:3, 3].copy())  # store position of this joint/end-effector
         
-        position = T[0:3, 3]
-        return position
+        return joint_positions
     
     def inverse(self, x, y, z, theta=0):
         """Compute inverse kinematics for given target_position [x,y,z]. Returns joint angles (deg)."""
@@ -215,8 +242,64 @@ class RobotController:
         joint_angles = [math.degrees(ang) for ang in [theta1, theta2, theta3, theta4]]
         return joint_angles
     
-def main():
-    controller = RobotController()
+    def compute_quintic_coeffs(self, theta0, thetaf, vel0, velf, acc0, accf, T):
+        """
+        Computes quintic polynomial coefficients for trajectory:
+        theta(t) = a0 + a1*t + a2*t^2 + a3*t^3 + a4*t^4 + a5*t^5
+        """
+        # Boundary conditions vector
+        b = np.array([theta0, vel0, acc0, thetaf, velf, accf])
+
+        # Time matrix
+        A = np.array([
+            [1, 0, 0, 0, 0, 0],
+            [0, 1, 0, 0, 0, 0],
+            [0, 0, 2, 0, 0, 0],
+            [1, T, T**2, T**3, T**4, T**5],
+            [0, 1, 2*T, 3*T**2, 4*T**3, 5*T**4],
+            [0, 0, 2, 6*T, 12*T**2, 20*T**3]
+        ])
+
+        # Solve for coefficients
+        coeffs = np.linalg.solve(A, b)
+        return coeffs
+    
+    def evaluate_quintic(self, coeffs, t):
+        """
+        Evaluates position, velocity, acceleration at time t
+        """
+        a0, a1, a2, a3, a4, a5 = coeffs
+        theta = a0 + a1*t + a2*t**2 + a3*t**3 + a4*t**4 + a5*t**5
+        theta_dot = a1 + 2*a2*t + 3*a3*t**2 + 4*a4*t**3 + 5*a5*t**4
+        theta_ddot = 2*a2 + 6*a3*t + 12*a4*t**2 + 20*a5*t**3
+        return theta, theta_dot, theta_ddot
+
+    # ----------------------
+    # Debug functions
+    # ----------------------
+
+    def plot_robot(self, joint_positions):
+        """
+        Plot a robot in 3D given joint positions.
+        
+        joint_positions: list of [x,y,z] positions from base to end-effector
+        """
+        xs, ys, zs = zip(*joint_positions)
+
+        # Update link data
+        self.link_plot.set_data(xs, ys)
+        self.link_plot.set_3d_properties(zs)
+
+        # Update end-effector
+        self.ee_plot._offsets3d = ( [xs[-1]], [ys[-1]], [zs[-1]] )
+
+        # Redraw
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
+
+
+def live_test():
+    controller = RobotController(debug=True)
     try:
         target_position = [0.1, 0.1, 0.1]  # Example target position in meters
         joint_angles = controller.inverse(*target_position)
@@ -231,6 +314,28 @@ def main():
         print("\nKeyboard interrupt received, stopping the program.")
     finally:
         controller.disable_motors()
+
+
+def sim_test():
+    controller = RobotController(debug=True)
+
+    T = 2.0  # Duration of the trajectory in seconds
+    t = 0.0
+    dt = 0.1  # Time step in seconds
+    while t <= T:
+        coeffs = controller.compute_quintic_coeffs(0, 90, 0, 0, 0, 0, T)
+        theta, theta_dot, theta_ddot = controller.evaluate_quintic(coeffs, t)
+        print(f"t={t:.2f}s: θ={theta:.2f}°, ω={theta_dot:.2f}°/s, α={theta_ddot:.2f}°/s²")
+        t += dt
+        joint_angles = [theta, 0, 0, 0]  # Move only first joint for demo
+        positions = controller.forward(joint_angles)
+        controller.plot_robot(positions)
+        time.sleep(dt)
+
+    plt.show(block=True)
+
+def main():
+    sim_test()
 
 if __name__ == "__main__":
     main()

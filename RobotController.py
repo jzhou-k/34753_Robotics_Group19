@@ -30,10 +30,10 @@ class RobotController:
                                    [0, 0.093, 0, 0],
                                    [0, 0.05, 0, 0],
                                    ])
-        
+
         if debug:
             print("RobotController initialized in debug mode.")
-            
+
             plt.ion()  # Turn on interactive mode
             self.fig = plt.figure()
             self.ax = self.fig.add_subplot(111, projection='3d')
@@ -50,7 +50,7 @@ class RobotController:
             plt.show()
 
             return
-        
+
         # Initialize PortHandler instance
         # Set the port path
         # Get methods and members of PortHandlerLinux or PortHandlerWindows
@@ -95,7 +95,7 @@ class RobotController:
                 print(self.packetHandler.getRxPacketError(dxl_error))
             else:
                 print(f"Motor {motor_id}: torque enabled")
- 
+
     def disable_motors(self):
         """Disable torque on all motors and close port."""
         for motor_id in self.motor_ids:
@@ -178,12 +178,12 @@ class RobotController:
                 j_a[i] = deg
                 self.joint_angle_error[i] = deg - self.joint_angles[i]
         return j_a
-    
+
     def read_ee_position(self):
         """Return end-effector cartesian coordinates computed from current encoder readings."""
         j_a = self.read_joint_angles()
         return self.forward(j_a)
-    
+
     def check_limits(self, deg, motor_id):
         """Check if the given angle (deg) is within joint limits for the specified motor_id."""
         idx = self.motor_ids.index(motor_id)
@@ -193,11 +193,15 @@ class RobotController:
             print(f"Angle {deg}° for motor {motor_id} exceeds limits ({lower_limit}°, {upper_limit}°).")
             return False
         return True
-    
+
     # ----------------------
     # Kinematic functions
     # ----------------------
+
+
     
+
+
     def make_DH_matrix(self, d, a, alpha, theta):
         """Create individual DH transformation matrix."""
         T = np.array([[math.cos(theta), -math.sin(theta)*math.cos(alpha),  math.sin(theta)*math.sin(alpha), a*math.cos(theta)],
@@ -205,7 +209,7 @@ class RobotController:
                       [0,                math.sin(alpha),                  math.cos(alpha),                 d],
                       [0,                0,                                0,                               1]])
         return T
-    
+
     def forward(self, joint_angles):
         """
         Compute forward kinematics for given joint angles (deg).
@@ -213,19 +217,19 @@ class RobotController:
         """
         if len(joint_angles) != len(self.motor_ids):
             raise ValueError("Length of joint_angles must match number of motors.")
-        
+
         T = np.eye(4)
         joint_positions = [T[0:3, 3].copy()]  # start with base position
-        
+
         for i, angle in enumerate(joint_angles):
             theta = math.radians(angle)  # Convert to radians
             d, a, alpha, _ = self.dh_params[i]
             A_i = self.make_DH_matrix(d, a, alpha, theta)
             T = np.dot(T, A_i)
             joint_positions.append(T[0:3, 3].copy())  # store position of this joint/end-effector
-        
+
         return joint_positions
-    
+
     def inverse(self, x, y, z, theta=0):
         """Compute inverse kinematics for given target_position [x,y,z]. Returns joint angles (deg)."""
         d1 = self.dh_params[0][0]
@@ -241,7 +245,7 @@ class RobotController:
         theta4 = theta - theta2 - theta3
         joint_angles = [math.degrees(ang) for ang in [theta1, theta2, theta3, theta4]]
         return joint_angles
-    
+
     def compute_quintic_coeffs(self, theta0, thetaf, vel0, velf, acc0, accf, T):
         """
         Computes quintic polynomial coefficients for trajectory:
@@ -263,7 +267,7 @@ class RobotController:
         # Solve for coefficients
         coeffs = np.linalg.solve(A, b)
         return coeffs
-    
+
     def evaluate_quintic(self, coeffs, t):
         """
         Evaluates position, velocity, acceleration at time t
@@ -281,7 +285,7 @@ class RobotController:
     def plot_robot(self, joint_positions):
         """
         Plot a robot in 3D given joint positions.
-        
+
         joint_positions: list of [x,y,z] positions from base to end-effector
         """
         xs, ys, zs = zip(*joint_positions)

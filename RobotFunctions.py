@@ -231,7 +231,7 @@ def inverse_ik_from_pose(T04, d1, d2, d3, d4):
 
     return np.array([t1, t2, t3, t4], dtype=float)
 
-# ---------- Convenience runner ----------
+# Runs Forward and Inverse Kinematics + Visualisation
 def solve_fk_ik_and_visualize(pos4_xyz, Rot4_X4_Z0, d1, d2, d3, d4, draw_axes=True):
     """
     Given end-effector position and Rot4_X4_Z0, solve IK, verify with FK, and visualize.
@@ -255,6 +255,71 @@ def solve_fk_ik_and_visualize(pos4_xyz, Rot4_X4_Z0, d1, d2, d3, d4, draw_axes=Tr
     ], dtype=float)
 
     # Visualize
-    plot_robot_4link(q, DH_table, title="IK Solution (using Rot4_X4_Z0 input)", draw_axes=draw_axes)
+    plot_robot_4link(q, DH_table, title="IK Solution", draw_axes=draw_axes)
 
     return q, T04_fk, T04_target
+
+def jacobian(q, d, T45=None):
+    """
+    Geometric Jacobians for your 4-DOF robot using Standard-DH (all revolute).
+    Args
+    ----
+    q   : iterable (t1, t2, t3, t4) in radians
+    d   : iterable (d1, d2, d3, d4) link params per your fk_T04 convention
+          T01: (theta1,d1, 0, +pi/2)
+          T12: (theta2, 0, d2, 0)
+          T23: (theta3, 0, d3, 0)
+          T34: (theta4, 0, d4, 0)
+    T45 : optional 4×4 SymPy transform for camera pose {4}→{5}.
+          If None, identity is used (camera at the EE).
+
+    Returns
+    -------
+    (J4, J5) : 6×4 SymPy matrices evaluated at q
+               J4 is EE Jacobian (frame {4}); J5 is camera Jacobian (frame {5})
+    """
+    t1, t2, t3, t4 = map(sp.nsimplify, q)
+    d1, d2, d3, d4 = d
+    pi = sp.pi
+
+    # Symbols
+    theta1, theta2, theta3, theta4 = sp.symbols('theta1 theta2 theta3 theta4')
+
+    # Per-link DH transforms (symbolic)
+    T01 = make_DH_matrix(theta1, d1,  0,  pi/2)
+    T12 = make_DH_matrix(theta2, 0,   d2, 0)
+    T23 = make_DH_matrix(theta3, 0,   d3, 0)
+    T34 = make_DH_matrix(theta4, 0,   d4, 0)
+
+    # Cumulative
+    T02 = T01 * T12
+    T03 = T02 * T23
+    T04 = T03 * T34
+    if T45 is None:
+        T45 = sp.eye(4)
+    T05 = T04 * T45
+
+    # Axes z_{i-1} and origins O_{i-1} in {0}
+    z0 = sp.Matrix([0, 0, 1]); O0 = sp.Matrix([0, 0, 0])
+    z1, O1 = T01[0:3, 2], T01[0:3, 3]
+    z2, O2 = T02[0:3, 2], T02[0:3, 3]
+    z3, O3 = T03[0:3, 2], T03[0:3, 3]
+    O4      = T04[0:3, 3]
+    O5      = T05[0:3, 3]
+
+    Z = [z0, z1, z2, z3]
+    O = [O0, O1, O2, O3]
+
+    def _J_at(Ok):
+        cols_v = [Z[i].cross(Ok - O[i]) for i in range(4)]
+        cols_w = [Z[i] for i in range(4)]
+        Jv = sp.Matrix.hstack(*cols_v)
+        Jw = sp.Matrix.hstack(*cols_w)
+        J  = sp.Matrix.vstack(Jv, Jw)
+        return J.subs({theta1: t1, theta2: t2, theta3: t3, theta4: t4}).applyfunc(
+            lambda x: 0 if abs(sp.N(x)) < 1e-8 else sp.N(x, 6)
+        )
+
+    J4 = _J_at(O4)
+    J5 = _J_at(O5)
+    return J4, J5

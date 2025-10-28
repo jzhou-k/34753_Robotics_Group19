@@ -4,6 +4,7 @@
 import numpy as np
 import sympy as sp
 import math
+import matplotlib.pyplot as plt
 
 # =========================
 # SymPy DH utilities (yours)
@@ -323,3 +324,139 @@ def jacobian(q, d, T45=None):
     J4 = _J_at(O4)
     J5 = _J_at(O5)
     return J4, J5
+
+
+def get_q_knots(Q_rad, picks):
+    """Return the 5×4 array of joint angles at the selected indices (radians)."""
+    return np.asarray([tuple(map(float, Q_rad[i, :])) for i in picks], dtype=float)
+
+
+def qdot_from_vlin(q_here, vlin_xyz, d1, d2, d3, d4, T45, lam=None):
+    """
+    Map linear EE velocity [vx,vy,vz] (mm/s) at pose q_here -> joint rates (4,).
+    lam=None: pseudoinverse; lam>0: damped least-squares.
+    """
+    J4, _ = jacobian(tuple(q_here), (d1, d2, d3, d4), T45=T45)
+    v6 = sp.Matrix([vlin_xyz[0], vlin_xyz[1], vlin_xyz[2], 0, 0, 0])
+    if lam is None:
+        qdot = J4.pinv() * v6
+    else:
+        J = sp.Matrix(J4); I6 = sp.eye(6)
+        qdot = (J.T * (J*J.T + (lam**2)*I6).inv()) * v6
+    return np.array([float(sp.N(x)) for x in qdot], dtype=float)
+
+def compute_qdot_knots(q_knots, v_lin_knots, d1, d2, d3, d4, T45, lam=None):
+    """Compute joint rates at each knot using the Jacobian mapping."""
+    return np.vstack([
+        qdot_from_vlin(q_knots[k], v_lin_knots[k], d1, d2, d3, d4, T45, lam)
+        for k in range(len(q_knots))
+    ])
+
+def quintic_coeffs(q0, dq0, ddq0, qT, dqT, ddqT, T):
+    """Solve for a0..a5 in q(t)=a0+a1 t+...+a5 t^5 with BCs at t=0 and t=T."""
+    A = np.array([
+        [1, 0,    0,      0,        0,         0],
+        [0, 1,    0,      0,        0,         0],
+        [0, 0,  2.0,      0,        0,         0],
+        [1, T, T**2,   T**3,     T**4,      T**5],
+        [0, 1, 2*T,  3*T**2,  4*T**3,   5*T**4],
+        [0, 0,   2,    6*T,  12*T**2,  20*T**3],
+    ], dtype=float)
+    b = np.array([q0, dq0, ddq0, qT, dqT, ddqT], dtype=float)
+    return np.linalg.solve(A, b)
+
+def build_segment_coeffs(q_knots, qdot_knots, Tseg=2.0):
+    """
+    Return dict coeffs['A'|'B'|'C'|'D'][j] = [a0..a5] for joints j=0..3,
+    using zero accel at all knots.
+    """
+    segments_idx = {"A": (0,1), "B": (1,2), "C": (2,3), "D": (3,4)}
+    coeffs = {name: {} for name in segments_idx}
+    for name, (i0, i1) in segments_idx.items():
+        for j in range(4):
+            coeffs[name][j] = quintic_coeffs(
+                q_knots[i0, j], qdot_knots[i0, j], 0.0,
+                q_knots[i1, j], qdot_knots[i1, j], 0.0,
+                Tseg
+            )
+    return coeffs
+
+def eval_quintic(a, t):
+    """Evaluate a quintic given coefficients [a0..a5] at time t."""
+    a0,a1,a2,a3,a4,a5 = a
+    return ((a5*t + a4)*t + a3)*t**3 + a2*t*t + a1*t + a0
+
+def q_at_time(coeffs, t):
+    """Get q(t) for t in [0,8] using four 2-s segments."""
+    if   0.0 <= t < 2.0: seg, tau = "A", t - 0.0
+    elif 2.0 <= t < 4.0: seg, tau = "B", t - 2.0
+    elif 4.0 <= t < 6.0: seg, tau = "C", t - 4.0
+    elif 6.0 <= t <= 8.0: seg, tau = "D", t - 6.0
+    else: raise ValueError("t out of range [0,8]")
+    return np.array([eval_quintic(coeffs[seg][j], tau) for j in range(4)], dtype=float)
+
+def forward_xyz(q, d1, d2, d3, d4):
+    """Return end-effector position (x,y,z) in mm for a 4-vector q."""
+    T04 = fk_T04(tuple(q), d1, d2, d3, d4)
+    return np.array(T04[:3, 3], dtype=float).reshape(3,)
+
+def sample_paths(coeffs, Q_rad, d1, d2, d3, d4, N=400, T_total=8.0):
+    """Sample actual path from interpolated q(t) and desired path from 37 poses."""
+    ts = np.linspace(0.0, T_total, N)
+    xyz_actual = np.vstack([forward_xyz(q_at_time(coeffs, t), d1, d2, d3, d4) for t in ts])
+    idxs = np.clip(np.round((ts/T_total)*36).astype(int), 0, 36)
+    xyz_desired = np.vstack([forward_xyz(Q_rad[k, :].astype(float), d1, d2, d3, d4) for k in idxs])
+    return ts, xyz_actual, xyz_desired
+
+def compute_rmse(xyz_actual, xyz_desired):
+    """RMSE in mm between two paths."""
+    err = np.linalg.norm(xyz_actual - xyz_desired, axis=1)
+    return float(np.sqrt(np.mean(err**2)))
+
+def print_joint_table(phi_labels, q_knots, qdot_knots):
+    """Print joint angles (rad) and velocities (rad/s) at knots."""
+    try:
+        from tabulate import tabulate
+        rows = []
+        for k, phi in enumerate(phi_labels):
+            rows.append([f"{float(sp.N(phi)):.3f}"] +
+                        [f"{q_knots[k,j]:.6f}" for j in range(4)] +
+                        [f"{qdot_knots[k,j]:.6f}" for j in range(4)])
+        headers = ["φ (rad)", "θ1", "θ2", "θ3", "θ4",
+                   "θ1dot", "θ2dot", "θ3dot", "θ4dot"]
+        print(tabulate(rows, headers=headers, tablefmt="fancy_grid"))
+    except Exception:
+        print("φ (rad)   θ1        θ2        θ3        θ4        θ1dot     θ2dot     θ3dot     θ4dot")
+        for k, phi in enumerate(phi_labels):
+            row = [float(sp.N(phi))] + list(q_knots[k]) + list(qdot_knots[k])
+            print(" ".join(f"{x:>9.6f}" for x in row))
+
+def plot_paths(ts, xyz_actual, xyz_desired):
+    """Produce 3D path and y–z projection. Units: mm."""
+    fig = plt.figure(figsize=(11,5))
+
+    ax3d = fig.add_subplot(1,2,1, projection='3d')
+    ax3d.plot(xyz_desired[:,0], xyz_desired[:,1], xyz_desired[:,2], lw=2, label='Desired')
+    ax3d.plot(xyz_actual[:,0],  xyz_actual[:,1],  xyz_actual[:,2],  lw=2, ls='--', label='Interpolated')
+    ax3d.scatter(*xyz_desired[0], s=30)
+    ax3d.set_title("End-effector path (3D)")
+    ax3d.set_xlabel("x [mm]"); ax3d.set_ylabel("y [mm]"); ax3d.set_zlabel("z [mm]")
+    ax3d.legend()
+
+    ax2d = fig.add_subplot(1,2,2)
+    ax2d.plot(xyz_desired[:,1], xyz_desired[:,2], lw=2, label='Desired (y–z)')
+    ax2d.plot(xyz_actual[:,1],  xyz_actual[:,2],  lw=2, ls='--', label='Interpolated (y–z)')
+    ax2d.set_aspect('equal', adjustable='datalim')
+    ax2d.set_xlabel("y [mm]"); ax2d.set_ylabel("z [mm]")
+    ax2d.set_title("Projection on motion plane")
+    ax2d.grid(True); ax2d.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+def segment_matrix(segment_dict):
+    rows = []
+    for j in range(4):  # four joints
+        a0, a1, a2, a3, a4, a5 = segment_dict[j]
+        rows.append([a5, a4, a3, a2, a1, a0])  # order: t^5 → t^0
+    return sp.Matrix(rows)

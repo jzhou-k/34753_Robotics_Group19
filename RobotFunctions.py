@@ -460,3 +460,9 @@ def segment_matrix(segment_dict):
         a0, a1, a2, a3, a4, a5 = segment_dict[j]
         rows.append([a5, a4, a3, a2, a1, a0])  # order: t^5 → t^0
     return sp.Matrix(rows)
+
+def interpolate_joint_trajectory(coeffs, N=400, T_total=8.0):
+    """Return (N,4) array of interpolated joint angles over [0,T_total]."""
+    ts = np.linspace(0.0, T_total, N)
+    Q_interp = np.vstack([q_at_time(coeffs, t) for t in ts])
+    return Q_interp

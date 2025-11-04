@@ -4,6 +4,7 @@ from math import pi
 import math
 import matplotlib.pyplot as plt
 from dynamixel_sdk import PortHandler, PacketHandler
+import cv2
 
 class RobotController:
     def __init__(self, debug=False,
@@ -516,20 +517,23 @@ def Problem3():
     animate_arm(positions,pause_time=1/2)
 
 def test_interpolations(x1,y1,z1,x2,y2,z2,theta=-90):
-    Controller = RobotController(debug=False)
+    Controller = RobotController(debug=False, DEVICENAME="COM3")
     p1,p2,p3,p4 = Controller.inverse_orientation(x1,y1,z1,math.radians(theta))
     p5,p6,p7,p8 = Controller.inverse_orientation(x2,y2,z2,math.radians(theta))
 
     angles = Controller.interpolate_angles([p1,p2,p3,p4], [p5,p6,p7,p8], 50, Controller.smoothstep)
+    for angle_set in angles:
+        Controller.Move_motor(angle_set)
+        time.sleep(0.05)
     
 
 def test(x,y,z,theta=-90):
-    Controller = RobotController(debug=False)
+    Controller = RobotController(debug=False, DEVICENAME="COM3")
     p1,p2,p3,p4 = Controller.inverse_orientation(x,y,z,math.radians(theta))
     Controller.Move_motor([p1,p2,p3,p4])
 
 def calibrate():
-    Controller = RobotController(debug=False)
+    Controller = RobotController(debug=False, DEVICENAME="COM3")
     Controller.enable_motors()
     Controller.Move_motor([0,0,0,0])
 
@@ -541,4 +545,59 @@ def main():
     # test_inter(100,0,0, 150,0,0)
 
 if __name__ == "__main__":
-    main()
+    test(80,0,130)
+
+    time.sleep(2)
+
+    # Load the H template
+    template = cv2.imread("H.png", cv2.IMREAD_GRAYSCALE)
+    template = cv2.GaussianBlur(template, (3,3), 0)
+    template_edges = cv2.Canny(template, 50, 150)
+    tH, tW = template_edges.shape
+
+    # Open webcam (0 = default camera)
+    cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
+
+
+
+    if not cap.isOpened():
+        print("Error: Cannot open camera")
+        exit()
+
+    for _ in range(1):
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray, (5,5), 0)
+        edges = cv2.Canny(blur, 50, 150)
+
+        # Template matching
+        res = cv2.matchTemplate(edges, template_edges, cv2.TM_CCOEFF_NORMED)
+        # Get only max element of res dont use thresholding
+        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+        pt = max_loc
+
+        h = 30
+        vx = (150*(175-h)/175)/600
+
+        x = -(245 - pt[1])*vx + 25
+        y = (300 - pt[0])*vx
+        print("x:", x, "y:", y)
+        test(80+x, y, 100)
+        test_interpolations(80+x,y,100, 80+x,y,-20)
+
+        cv2.rectangle(frame, (pt[0], pt[1]), (pt[0] + tW, pt[1] + tH), (0,0,255), 2)
+        cv2.putText(frame, "H", (pt[0], pt[1]-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
+
+        # Show video feed
+        cv2.imshow("H Detection (Press Q to quit)", frame)
+        cv2.imwrite("current_frame.png", frame)
+
+        # Quit on Q key
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()

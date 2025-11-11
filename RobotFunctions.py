@@ -220,7 +220,7 @@ def inverse_ik_from_pose(T04, d1, d2, d3, d4):
 
     # 5) theta3 from cosine law
     cos_t3 = clamp((r*r + s*s - d2*d2 - d3*d3) / (2.0*d2*d3))
-    # Elbow-up (negative sin) by default; change sign for elbow-down
+    # Elbow-up (negative sign) by default; change sign for elbow-down
     sin_t3 = -math.sqrt(max(0.0, 1.0 - cos_t3*cos_t3))
     t3 = math.atan2(sin_t3, cos_t3)
 

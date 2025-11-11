@@ -5,6 +5,9 @@ import math
 import matplotlib.pyplot as plt
 from dynamixel_sdk import PortHandler, PacketHandler
 import cv2
+from keydetector import detect_keyboard_text
+from PIL import Image
+
 
 class RobotController:
     def __init__(self, debug=False,
@@ -85,6 +88,7 @@ class RobotController:
     # ----------------------
 
     def Move_motor(self, angles):
+        print("Moving motors to angles:", angles)
         for i in range(len(angles)):
             angle = self.Motor_offsets[i]+angles[i]
             try:
@@ -192,9 +196,9 @@ class RobotController:
                 print(self.packetHandler.getRxPacketError(dxl_error))
             else:
                 # convert and remove offsets
-                deg = self.rot_to_deg(dxl_present_position) - self.joint_offsets[i]
+                deg = self.rot_to_deg(dxl_present_position) - self.Motor_offsets[i]
                 j_a[i] = deg
-                self.joint_angle_error[i] = deg - self.joint_angles[i]
+                # self.joint_angle_error[i] = deg - self.joint_angles[i]
         return j_a
     
     def read_ee_position(self):
@@ -202,6 +206,10 @@ class RobotController:
         j_a = self.read_joint_angles()
         return self.forward(j_a)
     
+    def rot_to_deg(self, rot):
+        """Convert motor rotation units to degrees."""
+        return rot * 0.29  # Assuming 0.29 degrees per unit
+
     def check_limits(self, deg, motor_id):
         """Check if the given angle (deg) is within joint limits for the specified motor_id."""
         idx = self.motor_ids.index(motor_id)
@@ -545,59 +553,49 @@ def main():
     # test_inter(100,0,0, 150,0,0)
 
 if __name__ == "__main__":
-    test(80,0,130)
+    # test(80,0,130)
+
+    # IMG_PATH = "./robot_img/keyboard_test.png"          # Images from the robot should be placed here:
+    # OUT_DIR  = "autolabel_out"              # folder to check the correctness of the detected keys . 
+
+
+    # print("Starting camera...")
+    # cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
+    # print("Capturing image from camera...")
+
+    # if not cap.isOpened():
+    #     print("Error: Cannot open camera")
+    #     exit()
+
+    # ret, frame = cap.read()
+    # if not ret:
+    #     print("Error: Cannot read frame")
+
+    # # save img to IMG_PATH
+    # cv2.imwrite(IMG_PATH, frame)
+    # cap.release()
+    # print(f"Image saved to {IMG_PATH}")
+
+    # # Kør detektion
+    # df, centers, chars = detect_keyboard_text(
+    #     image_path=IMG_PATH,
+    #     target_text="Hello",              # <-  Our target text. 
+    #     out_dir=OUT_DIR
+    # )
+
+    # cx, cy = centers[0]                   # <- Center coordinates of the keys.
+    # print(centers)
+
+
+    Controller = RobotController(debug=False, DEVICENAME="COM3")
+    angles = Controller.inverse_orientation(82, 2, 120, math.radians(-90))
+    print("angles: ", angles)
+    Controller.Move_motor(angles)
+    print(Controller.read_joint_angles())
 
     time.sleep(2)
 
-    # Load the H template
-    template = cv2.imread("H.png", cv2.IMREAD_GRAYSCALE)
-    template = cv2.GaussianBlur(template, (3,3), 0)
-    template_edges = cv2.Canny(template, 50, 150)
-    tH, tW = template_edges.shape
-
-    # Open webcam (0 = default camera)
-    cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
-
-
-
-    if not cap.isOpened():
-        print("Error: Cannot open camera")
-        exit()
-
-    for _ in range(1):
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5,5), 0)
-        edges = cv2.Canny(blur, 50, 150)
-
-        # Template matching
-        res = cv2.matchTemplate(edges, template_edges, cv2.TM_CCOEFF_NORMED)
-        # Get only max element of res dont use thresholding
-        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-        pt = max_loc
-
-        h = 30
-        vx = (150*(175-h)/175)/600
-
-        x = (245 - pt[1])*vx + 25
-        y = (300 - pt[0])*vx
-        print("x:", x, "y:", y)
-        test(80+x, y, 100)
-        test_interpolations(80+x,y,100, 80+x,y,-20)
-
-        cv2.rectangle(frame, (pt[0], pt[1]), (pt[0] + tW, pt[1] + tH), (0,0,255), 2)
-        cv2.putText(frame, "H", (pt[0], pt[1]-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
-
-        # Show video feed
-        cv2.imshow("H Detection (Press Q to quit)", frame)
-        cv2.imwrite("current_frame.png", frame)
-
-        # Quit on Q key
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()
+    angles = Controller.inverse_orientation(82, 2, 30, math.radians(-90))
+    print("angles: ", angles)
+    Controller.Move_motor(angles)
+    print(Controller.read_joint_angles())

@@ -2,60 +2,50 @@ import cv2
 import numpy as np
 
 # -----------------------------
-# Step 1: Capture image of chessboard
+# Step 1: Prepare your points
 # -----------------------------
-image_path = "chessboard.jpg"  # replace with your image
-img = cv2.imread(image_path)
-gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-# Chessboard dimensions (number of inner corners per row and column)
-chessboard_size = (7, 5)  # e.g., 7x5 inner corners
+# Example: pixel coordinates (u,v) of keyboard keys in the camera image
+# Format: Nx2 array
+pixel_points = np.array([
+    [281, 333],  # key H
+    [200, 333],  # key G
+    [362, 333],  # key J
+    [240, 410],  # key B
+    [342, 250],  # key U
+    [34, 330],  # key D
+], dtype=np.float32)
 
-# Detect chessboard corners
-ret, corners = cv2.findChessboardCorners(gray, chessboard_size, None)
-
-if not ret:
-    print("Chessboard not detected.")
-    exit()
-
-# Refine corner locations
-corners = cv2.cornerSubPix(
-    gray, corners, winSize=(11, 11), zeroZone=(-1, -1),
-    criteria=(cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
-)
-
-# -----------------------------
-# Step 2: Define real-world coordinates of the corners
-# -----------------------------
-# Assume each square is 0.03 m (3 cm) and Z=0 on the table
-square_size = 0.03
-world_pts = []
-for i in range(chessboard_size[1]):  # rows
-    for j in range(chessboard_size[0]):  # columns
-        world_pts.append([j * square_size, i * square_size])
-
-world_pts = np.array(world_pts, dtype=np.float32)
-img_pts = corners.reshape(-1, 2).astype(np.float32)
+# Corresponding real-world coordinates (X,Y) of the keys on the table or keyboard
+# Units should match your robot/world frame (meters or mm)
+world_points = np.array([
+    [100, 0],  # key H
+    [90, 16.5],  # key G
+    [109.5, -16.5],  # key J
+    [78.8, -1.2],  # key B
+    [121, 1.2],  # key U
+    [71.5, 49.4],  # key D
+], dtype=np.float32)
 
 # -----------------------------
-# Step 3: Compute Homography
+# Step 2: Compute the Homography
 # -----------------------------
-H, status = cv2.findHomography(img_pts, world_pts, cv2.RANSAC, 5.0)
+H, status = cv2.findHomography(pixel_points, world_points, cv2.RANSAC, 5.0)
 print("Homography matrix:\n", H)
 
 # -----------------------------
-# Step 4: Function to convert pixel to world
+# Step 3: Function to convert pixel to world coordinates
 # -----------------------------
 def pixel_to_world(u, v, H):
-    pixel = np.array([u, v, 1], dtype=np.float32)
-    world_h = H @ pixel
+    pixel_h = np.array([u, v, 1], dtype=np.float32)  # homogeneous coordinates
+    world_h = H @ pixel_h
     X = world_h[0] / world_h[2]
     Y = world_h[1] / world_h[2]
     return X, Y
 
 # -----------------------------
-# Step 5: Example usage
+# Step 4: Example usage
 # -----------------------------
-u, v = 100, 150  # example pixel coordinates
+u, v = 503, 256  # some pixel coordinate
 X, Y = pixel_to_world(u, v, H)
 print(f"Pixel ({u}, {v}) -> World coordinates: X={X:.3f} m, Y={Y:.3f} m")

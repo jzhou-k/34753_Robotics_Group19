@@ -629,6 +629,65 @@ def type_test(inp):
         previous = current
 
 
+def camera_calibration():
+    Controller = RobotController(debug=False, DEVICENAME="COM3")
+    p1,p2,p3,p4 = Controller.read_joint_angles()
+    p5,p6,p7,p8 = Controller.inverse_orientation(80,0,20,math.radians(-90))
+
+    angles = Controller.interpolate_angles([p1,p2,p3,p4], [p5,p6,p7,p8], 50, Controller.smoothstep)
+    for angle_set in angles:
+        Controller.Move_motor(angle_set)
+        time.sleep(0.05)
+
+    
+    # Capture img
+    cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
+
+    if not cap.isOpened():
+        print("Error: Cannot open camera")
+        exit()
+
+    ret, frame = cap.read()
+    if not ret:
+        print("Error: Cannot read frame")
+        exit()
+
+    cv2.imshow("Camera Calibration", frame)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    
+    # Move to right pos for pic
+    p1,p2,p3,p4 = Controller.read_joint_angles()
+    p5,p6,p7,p8 = Controller.inverse_orientation(80,0,130,math.radians(-90))
+
+    angles = Controller.interpolate_angles([p1,p2,p3,p4], [p5,p6,p7,p8], 50, Controller.smoothstep)
+    for angle_set in angles:
+        Controller.Move_motor(angle_set)
+        time.sleep(0.05)
+
+    time.sleep(1)
+
+
+    # Take img for detection
+    print("Taking calibration image...")
+    cap.read()
+    ret, frame = cap.read()
+    if not ret:
+        print("Error: Cannot read frame")
+        exit()
+
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    cv2.imwrite("keyboard.png",frame_rgb)
+    cv2.imshow("Calibration Image", frame_rgb)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    h,angle = get_keyboard(None)
+    print("Detected keyboard at h:", h, "angle:", angle)
+
+
+
 def cvtest():
     cap = cv2.VideoCapture(0)
     saved_frame = None
@@ -658,7 +717,8 @@ def main():
     # Problem3()
     # endeffector_rotation()
     # calibrate()
-    type_test("CLANKER")
+    # type_test("CLANKER")
+    camera_calibration()
     # cvtest()
     # test_interpolations(100,-50,50, 100,50,50)
 

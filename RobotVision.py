@@ -1,5 +1,5 @@
 import cv2
-import easyocr #pip install easyocr
+# import easyocr #pip install easyocr
 import math
 import numpy as np
 from keydetector import *
@@ -178,15 +178,17 @@ def image_to_world_coordinates(img,x,y,z,u,v,l=4,w=1280,h=960):
 
     return wx, wy, wz
 
-'''
+
 keys = keyboard_key_positions_mm(100, 0, rotation=math.radians(30), scale=1.0)
 print(keys['H'])
 print(keys['G'])
 print(keys['J'])
 print(keys['B'])
 print(keys['U'])
-print(keys['A'])
+print(keys['D'])
 
+print(keys['O'])
+'''
 import matplotlib.pyplot as plt
 
 # Example key positions (rotated 45° for testing)

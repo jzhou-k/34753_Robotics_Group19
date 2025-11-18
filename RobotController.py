@@ -5,18 +5,16 @@ import math
 import matplotlib.pyplot as plt
 from dynamixel_sdk import PortHandler, PacketHandler
 import cv2
-from keydetector import detect_keyboard_text
-from PIL import Image
-
+from RobotVision import *
 
 class RobotController:
     def __init__(self, debug=False,
-                 DEVICENAME="/dev/tty.usbmodem113201",
+                 DEVICENAME="/dev/tty.usbmodem112201",
                  PROTOCOL_VERSION=1.0,
                  BAUDRATE=1000000,
                  ADDR_MX_TORQUE_ENABLE=64,
                  ADDR_MX_GOAL_POSITION=30,
-                 ADDR_MX_PRESENT_POSITION=132,
+                 ADDR_MX_PRESENT_POSITION=36,
                  TORQUE_ENABLE=1,
                  TORQUE_DISABLE=0,
                  motor_ids=[1, 2, 3, 4]):
@@ -88,7 +86,6 @@ class RobotController:
     # ----------------------
 
     def Move_motor(self, angles):
-        print("Moving motors to angles:", angles)
         for i in range(len(angles)):
             angle = self.Motor_offsets[i]+angles[i]
             try:
@@ -191,14 +188,14 @@ class RobotController:
                                                                                                motor_id,
                                                                                                self.ADDR_MX_PRESENT_POSITION)
             if dxl_comm_result != 0:
-                print(self.packetHandler.getTxRxResult(dxl_comm_result))
+                print("1_____",self.packetHandler.getTxRxResult(dxl_comm_result))
             elif dxl_error != 0:
-                print(self.packetHandler.getRxPacketError(dxl_error))
+                print("2_____",self.packetHandler.getRxPacketError(dxl_error))
             else:
                 # convert and remove offsets
-                deg = self.rot_to_deg(dxl_present_position) - self.Motor_offsets[i]
+                deg = (dxl_present_position*0.29) - self.Motor_offsets[i]
                 j_a[i] = deg
-                # self.joint_angle_error[i] = deg - self.joint_angles[i]
+                # self.joint_angle_error[i] = deg - self.Motor_offsets[i]
         return j_a
     
     def read_ee_position(self):
@@ -206,10 +203,6 @@ class RobotController:
         j_a = self.read_joint_angles()
         return self.forward(j_a)
     
-    def rot_to_deg(self, rot):
-        """Convert motor rotation units to degrees."""
-        return rot * 0.29  # Assuming 0.29 degrees per unit
-
     def check_limits(self, deg, motor_id):
         """Check if the given angle (deg) is within joint limits for the specified motor_id."""
         idx = self.motor_ids.index(motor_id)
@@ -525,7 +518,7 @@ def Problem3():
     animate_arm(positions,pause_time=1/2)
 
 def test_interpolations(x1,y1,z1,x2,y2,z2,theta=-90):
-    Controller = RobotController(debug=False, DEVICENAME="COM3")
+    Controller = RobotController(debug=False)
     p1,p2,p3,p4 = Controller.inverse_orientation(x1,y1,z1,math.radians(theta))
     p5,p6,p7,p8 = Controller.inverse_orientation(x2,y2,z2,math.radians(theta))
 
@@ -536,66 +529,196 @@ def test_interpolations(x1,y1,z1,x2,y2,z2,theta=-90):
     
 
 def test(x,y,z,theta=-90):
-    Controller = RobotController(debug=False, DEVICENAME="COM3")
+    Controller = RobotController(debug=False)
     p1,p2,p3,p4 = Controller.inverse_orientation(x,y,z,math.radians(theta))
     Controller.Move_motor([p1,p2,p3,p4])
 
 def calibrate():
-    Controller = RobotController(debug=False, DEVICENAME="COM3")
+    Controller = RobotController(debug=False)
     Controller.enable_motors()
     Controller.Move_motor([0,0,0,0])
 
+def pressKey():
+    pass
+
+def type_test(inp):
+    Controller = RobotController(debug=False)
+    # previous = (100,0,120)
+    # Controller.Move_motor(Controller.inverse_orientation(80,0,130,math.radians(-90)))
+    print(Controller.read_joint_angles())
+    print(Controller.inverse_orientation(80,0,130,math.radians(-90)))
+
+    p1,p2,p3,p4 = Controller.read_joint_angles()
+    p5,p6,p7,p8 = Controller.inverse_orientation(80,0,130,math.radians(-90))
+
+    angles = Controller.interpolate_angles([p1,p2,p3,p4], [p5,p6,p7,p8], 50, Controller.smoothstep)
+    for angle_set in angles:
+        Controller.Move_motor(angle_set)
+        time.sleep(0.05)
+
+
+    theta=-90
+    cap = cv2.VideoCapture(0)
+    img = None
+
+    if not cap.isOpened():
+        print("Error: Could not open camera 1.")
+    else:
+        # Capture one frame
+        ret, frame = cap.read()
+        if ret:
+            # Convert from BGR (OpenCV) to RGB (for display)
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            img = frame_rgb
+            # Display the image
+            cv2.imwrite("keyboard.png",frame_rgb)
+        else:
+            print("Error: Could not capture frame from camera 1.")
+
+    p1,p2,p3,p4 = Controller.inverse_orientation(80,0,130,math.radians(-90))
+    p5,p6,p7,p8 = Controller.inverse_orientation(80,0,20,math.radians(-90))
+
+    angles = Controller.interpolate_angles([p1,p2,p3,p4], [p5,p6,p7,p8], 50, Controller.smoothstep)
+    for angle_set in angles:
+        Controller.Move_motor(angle_set)
+        time.sleep(0.05)
+
+    previous = (80,0,20)
+
+    # Release camera resource
+    cap.release()
+    x_curr = previous[0]+15
+    y_curr = previous[1]
+    z_curr = previous[2]
+
+    h,angle = get_keyboard(None)
+    x_mov,y_mov,_ = image_to_world_coordinates(img,80,0,130,h[0], h[1])
+    positions = keyboard_key_positions_mm(x_curr+x_mov,y_curr+y_mov, angle)
+    print(x_curr+x_mov,y_curr+y_mov, angle)
+
+    for letter in inp:
+        print(letter)
+        current = (positions[letter][0],positions[letter][1],z_curr)
+        #move to position
+        p1,p2,p3,p4 = Controller.inverse_orientation(previous[0],previous[1],previous[2],math.radians(theta))
+        p5,p6,p7,p8 = Controller.inverse_orientation(current[0],current[1],current[2],math.radians(theta))
+
+        angles = Controller.interpolate_angles([p1,p2,p3,p4], [p5,p6,p7,p8], 50, Controller.smoothstep)
+        for angle_set in angles:
+            Controller.Move_motor(angle_set)
+            time.sleep(0.03)
+
+        #press down
+        p1,p2,p3,p4 = Controller.inverse_orientation(current[0],current[1],current[2],math.radians(theta))
+        p5,p6,p7,p8 = Controller.inverse_orientation(current[0],current[1],current[2]-20,math.radians(theta))
+
+        angles = Controller.interpolate_angles([p1,p2,p3,p4], [p5,p6,p7,p8], 10, Controller.smoothstep)
+        for angle_set in angles:
+            Controller.Move_motor(angle_set)
+            time.sleep(0.03)
+
+        #move back up
+        p1,p2,p3,p4 = Controller.inverse_orientation(current[0],current[1],current[2]-20,math.radians(theta))
+        p5,p6,p7,p8 = Controller.inverse_orientation(current[0],current[1],current[2],math.radians(theta))
+
+        angles = Controller.interpolate_angles([p1,p2,p3,p4], [p5,p6,p7,p8], 10, Controller.smoothstep)
+        for angle_set in angles:
+            Controller.Move_motor(angle_set)
+            time.sleep(0.03)
+
+        previous = current
+
+
+def cvtest():
+    cap = cv2.VideoCapture(0)
+    saved_frame = None
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        cv2.imshow("Camera", frame)
+        
+        # Save current frame in case we quit
+        saved_frame = frame.copy()
+        
+        # Press 'q' to quit
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            if saved_frame is not None:
+                cv2.imwrite("saved_frame.png", saved_frame)
+                print("Frame saved as saved_frame.png")
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+
 
 def main():
-    Problem3()
+    # Problem3()
     # endeffector_rotation()
     # calibrate()
-    # test_inter(100,0,0, 150,0,0)
+    type_test("CLANKER")
+    # cvtest()
+    # test_interpolations(100,-50,50, 100,50,50)
+
 
 if __name__ == "__main__":
-    # test(80,0,130)
-
-    # IMG_PATH = "./robot_img/keyboard_test.png"          # Images from the robot should be placed here:
-    # OUT_DIR  = "autolabel_out"              # folder to check the correctness of the detected keys . 
-
-
-    # print("Starting camera...")
-    # cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
-    # print("Capturing image from camera...")
-
-    # if not cap.isOpened():
-    #     print("Error: Cannot open camera")
-    #     exit()
-
-    # ret, frame = cap.read()
-    # if not ret:
-    #     print("Error: Cannot read frame")
-
-    # # save img to IMG_PATH
-    # cv2.imwrite(IMG_PATH, frame)
-    # cap.release()
-    # print(f"Image saved to {IMG_PATH}")
-
-    # # Kør detektion
-    # df, centers, chars = detect_keyboard_text(
-    #     image_path=IMG_PATH,
-    #     target_text="Hello",              # <-  Our target text. 
-    #     out_dir=OUT_DIR
-    # )
-
-    # cx, cy = centers[0]                   # <- Center coordinates of the keys.
-    # print(centers)
-
-
-    Controller = RobotController(debug=False, DEVICENAME="COM3")
-    angles = Controller.inverse_orientation(82, 2, 120, math.radians(-90))
-    print("angles: ", angles)
-    Controller.Move_motor(angles)
-    print(Controller.read_joint_angles())
+    main()
+    # test(100,0,0)
+    # cvtest()
 
     time.sleep(2)
+    '''
+    # Load the H template
+    template = cv2.imread("H.png", cv2.IMREAD_GRAYSCALE)
+    template = cv2.GaussianBlur(template, (3,3), 0)
+    template_edges = cv2.Canny(template, 50, 150)
+    tH, tW = template_edges.shape
 
-    angles = Controller.inverse_orientation(82, 2, 30, math.radians(-90))
-    print("angles: ", angles)
-    Controller.Move_motor(angles)
-    print(Controller.read_joint_angles())
+    # Open webcam (0 = default camera)
+    cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
+
+
+
+    if not cap.isOpened():
+        print("Error: Cannot open camera")
+        exit()
+
+    for _ in range(1):
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray, (5,5), 0)
+        edges = cv2.Canny(blur, 50, 150)
+
+        # Template matching
+        res = cv2.matchTemplate(edges, template_edges, cv2.TM_CCOEFF_NORMED)
+        # Get only max element of res dont use thresholding
+        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+        pt = max_loc
+
+        h = 30
+        vx = (150*(175-h)/175)/600
+
+        x = (245 - pt[1])*vx + 25
+        y = (300 - pt[0])*vx
+        print("x:", x, "y:", y)
+        test(80+x, y, 100)
+        test_interpolations(80+x,y,100, 80+x,y,-20)
+
+        cv2.rectangle(frame, (pt[0], pt[1]), (pt[0] + tW, pt[1] + tH), (0,0,255), 2)
+        cv2.putText(frame, "H", (pt[0], pt[1]-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
+
+        # Show video feed
+        cv2.imshow("H Detection (Press Q to quit)", frame)
+        cv2.imwrite("current_frame.png", frame)
+
+        # Quit on Q key
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()'''

@@ -221,3 +221,10 @@ def detect_ghj(
 
     _, centers, _ = detect_keyboard_text(image_path=image_path, target_text="ghj", out_dir=out_dir)
     return centers
+
+def detect_all(
+    image_path,
+    out_dir):
+
+    df, centers, chars = detect_keyboard_text(image_path=image_path, target_text="abcdefghijklmnopqrstuvwxyz", out_dir=out_dir)
+    return df, centers, chars

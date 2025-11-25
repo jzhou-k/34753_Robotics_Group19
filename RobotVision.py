@@ -1,10 +1,11 @@
 import cv2
-# import easyocr #pip install easyocr
+import easyocr #pip install easyocr
 import math
 import numpy as np
 from keydetector import *
 
-def keyboard_key_positions_mm(x_h, y_h, rotation=0.0, scale=1.0):
+#function to pass keyboard h key position and the rotatoin, returns the coordinates of rest of the keys
+def keyboard_key_positions_mm(x_h, y_h, rotation=0.0, scale=0.95):
 
     layout = [
         ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
@@ -27,7 +28,14 @@ def keyboard_key_positions_mm(x_h, y_h, rotation=0.0, scale=1.0):
         2: -0.5 * key_pitch   # bottom row (fix)
     }
 
-    cos_r, sin_r = math.cos(rotation), math.sin(rotation)
+    key_height_offset = 1#mm
+    row_z_offsets = {
+        0: key_height_offset ,  # top row
+        1: 0 ,  # home row
+        2: -key_height_offset   # bottom row (fix)
+    }
+
+    cos_r, sin_r = math.cos(-rotation), math.sin(-rotation)
 
     def rotate(dx, dy):
         x_rot = dx * cos_r - dy * sin_r
@@ -45,15 +53,20 @@ def keyboard_key_positions_mm(x_h, y_h, rotation=0.0, scale=1.0):
 
             dx_r, dy_r = rotate(dx, dy)
 
-            positions[key] = (x_h + dx_r, y_h + dy_r, 0.0)
+            positions[key] = (x_h + dx_r, y_h + dy_r, row_z_offsets[i])
+
+    bottom_row = 2
+    space_row_relative_to_H = (bottom_row + 1) - ref_row  # 1 row below bottom row
+    space_dx = -(space_row_relative_to_H * key_pitch)     # dx = ref_row - i
+    space_dy = 0                                         # centered under 'H'
+
+    dx_r, dy_r = rotate(space_dx, space_dy)
+    positions[' '] = (x_h + dx_r, y_h + dy_r, -key_height_offset*2)
 
     return positions
 
-
-
 def get_keyboard(img):
     #function to read the keyboard location and orientation
-    
     centers = detect_ghj("keyboard.png","testout")
 
     g = centers[0]
@@ -72,155 +85,38 @@ def get_key(image_path, key, out_dir):
     print(centers)
     return centers[0], 0
 
-def get_MnMs(img):
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    # edges = cv2.Canny(gray, 20, 200)
+def pixel_to_world_coordinates_homogrphy(hx,hy):
+    pixels = np.array([[ 45.5, 306.5],[452.0, 368.5],[223.0, 396.0],[150.5, 291.5],[105.0, 182.0],[264.0, 279.5],[380.0, 267.5],
+                    [493.5, 254.5],[677.5, 124.5],[607.0, 243.0],[717.5, 232.0],[828.5, 219.5],[674.5, 345.0],[564.0, 356.0],
+                    [790.0, 114.0],[903.5, 107.5],[219.0, 171.0],[ 45.0, 306.0],[337.5, 158.0],[565.5, 139.5],[338.0, 382.5],
+                    [ 22.5, 195.5],[110.5, 409.0],[ 25.0, 422.5],[453.5, 146.5]], dtype=np.float32)
 
-    threshold = 225
-    threshold_value = 255
+    worlds = np.array([[105.0,  97.0],[ 93.0,  13.0],[ 90.0,  51.0],[108.0,  60.0],[126.0,  66.0],[109.0,  41.0],[109.0,  22.0],
+                    [112.0,   4.0],[133.0, -23.0],[116.0, -10.0],[117.0, -32.0],[118.0, -50.0],[ 98.0, -23.0],[ 96.0,  -6.0],
+                    [137.0, -42.0],[138.0, -61.0],[129.0,  49.0],[107.0,  79.0],[129.0,  30.0],[132.0,  -8.0],[ 91.0,  33.0],
+                    [124.0,  84.0],[ 90.0,  65.0],[132.0,  12.0],[ 87.0,  84.0]], dtype=np.float32)
 
-    thresh = cv2.threshold(gray, threshold, threshold_value, cv2.THRESH_BINARY_INV)[1]
-    mask = thresh.copy()
-    mask = cv2.dilate(thresh, None, iterations = 5)
-    mask = mask.copy()
-    mask = cv2.erode(mask, None, iterations = 5)
+    H, _ = cv2.findHomography(pixels, worlds, method=cv2.RANSAC)
 
-    edges = cv2.Canny(mask, 20, 200)
+    #to get the world coordinates
+    pixel = np.array([hx, hy, 1.0])
+    world = H @ pixel
+    world /= world[2]  # normalize
+    X, Y = world[0], world[1]
+    return X,Y
 
-    circles = cv2.HoughCircles(
-        edges,
-        cv2.HOUGH_GRADIENT,
-        dp=2,
-        minDist=50,      
-        param1=100,         
-        param2=40,       
-        minRadius=20,       
-        maxRadius=100
-    )
-
-    img_hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-    colors_img = img.copy()
-
-    result = []
-
-    for (x, y, r) in circles[0]:
-        # Create a mask for the circular region
-        mask = np.zeros(img_hsv.shape[:2], dtype=np.uint8)
-        cv2.circle(mask, (int(x), int(y)), int(r), 255, -1)
-
-        # Extract HSV pixels inside the circle
-        hsv_pixels = img_hsv[mask == 255]
-
-        # Compute the mean HSV values
-        mean_hue = np.mean(hsv_pixels[:, 0])
-        mean_sat = np.mean(hsv_pixels[:, 1])
-        mean_val = np.mean(hsv_pixels[:, 2])
-
-        # Simple classification based on Hue
-        color = "Unknown"
-        if 2 <= mean_hue <= 6:
-            color = "Red"
-        elif 6 <= mean_hue <= 10:
-            color = "Brown"
-        elif 10 <= mean_hue <= 16:
-            color = "Orange"
-        elif 17 <= mean_hue <= 35:
-            color = "Yellow"
-        elif 36 <= mean_hue <= 85:
-            color = "Green"
-        elif 86 <= mean_hue <= 125:
-            color = "Blue"
-        elif 126 <= mean_hue <= 160:
-            color = "Purple"
-        
-
-        # print(f"Circle at ({x},{y}) → {color}")
-        result.append([x,y,color])
-
-        # Draw the circle and label it
-        cv2.circle(colors_img, (int(x), int(y)), int(r), (0,255,0), 2)
-        cv2.putText(colors_img, color, (int(x - r), int(y - r - 5)),cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 2)
-        # cv2.imshow(colors_img)
-        # cv2.show()
-    
-    return result
-
-def calibrate_Camera(img,hx,hy,x,y):
-    #use the location of the H key to calibrate the camera position
-    print("test")
-
-
-    
-
-def image_to_world_coordinates(img,x,y,z,u,v,l=4,w=1280,h=960):
+#manual calculations - not very accurate
+def image_to_world_coordinates(img,x,y,z,u,v,pixel_span=1225, real_span=140):
     #total distance from image to camera
 
-    d = 45+z+15+l
-    yt = (150*d)/194
-    px = yt/1200 #mm per pixel
-
-    u_c = w/2
-    v_c = h/2
-
-    x_mov = (u_c - v)*px
-    y_mov = (v_c - u)*px
-
     img_h, img_w = img.shape[:2]
+    l = img_w * (real_span / pixel_span)
     
-    # Pixel to normalized coordinates [-0.5, 0.5]
     u_norm = (u / img_w) - 0.5
-    v_norm = (v / img_h) - 0.5
+    v_norm = (v / img_h) - 0.3
     
-    # Scale normalized coordinates to world units
-    wx = x - v_norm * l   # +y in image is -x in world
-    wy = y - u_norm * l   # +x in image is -y in world
+    wx = v_norm * l
+    wy = u_norm * l
     wz = z    
 
     return wx, wy, wz
-
-
-keys = keyboard_key_positions_mm(100, 0, rotation=math.radians(30), scale=1.0)
-print(keys['H'])
-print(keys['G'])
-print(keys['J'])
-print(keys['B'])
-print(keys['U'])
-print(keys['D'])
-
-print(keys['O'])
-'''
-import matplotlib.pyplot as plt
-
-# Example key positions (rotated 45° for testing)
-keys_rotated = {
-    'H': keys['H'],
-    'G': keys['G'],
-    'J': keys['J'],
-    'B': keys['B'],
-    'U': keys['U'],
-    'A': keys['A'],
-    'P': keys['P'],
-    'Z': keys['Z']
-}
-
-plt.figure(figsize=(8, 10))
-plt.grid(True, linestyle='--', alpha=0.5)
-plt.axis('equal')
-
-# Plot keys
-for k, (x, y, z) in keys_rotated.items():
-    # Swap axes according to your convention: X=up, Y=left
-    x_plot = x
-    y_plot = -y  # flip horizontal so positive is left, negative right
-    plt.scatter(y_plot, x_plot, s=100, c='blue')
-    plt.text(y_plot + 1, x_plot + 1, k, fontsize=12)
-
-# Highlight H (origin)
-x0, y0, _ = keys_rotated['H']
-plt.scatter(-y0, x0, c='red', s=120, label='H (origin)')
-
-plt.xlabel('Y (mm, +left, -right)')
-plt.ylabel('X (mm, +up)')
-plt.title('Keyboard Key Positions (Robot Frame)')
-plt.legend()
-plt.show()'''

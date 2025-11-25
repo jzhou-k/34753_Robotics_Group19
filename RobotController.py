@@ -6,10 +6,11 @@ import matplotlib.pyplot as plt
 from dynamixel_sdk import PortHandler, PacketHandler
 import cv2
 from RobotVision import *
+from pynput import keyboard
 
 class RobotController:
     def __init__(self, debug=False,
-                 DEVICENAME="/dev/tty.usbmodem112201",
+                 DEVICENAME="/dev/tty.usbmodem12301",
                  PROTOCOL_VERSION=1.0,
                  BAUDRATE=1000000,
                  ADDR_MX_TORQUE_ENABLE=64,
@@ -53,15 +54,7 @@ class RobotController:
 
             return
         
-        
-        # Initialize PortHandler instance
-        # Set the port path
-        # Get methods and members of PortHandlerLinux or PortHandlerWindows
         self.portHandler = PortHandler(DEVICENAME)
-
-        # Initialize PacketHandler instance
-        # Set the protocol version
-        # Get methods and members of Protocol1PacketHandler or Protocol2PacketHandler
         self.packetHandler = PacketHandler(PROTOCOL_VERSION)
 
         # Open port
@@ -78,7 +71,9 @@ class RobotController:
             print("Failed to change the baudrate")
             quit()
 
-        self.Motor_offsets = [152, 63, 147, 150]
+        # self.Motor_offsets = [152, 63, 147, 150]
+        self.Motor_offsets = [145.0, 64.74, 143.52, 231.13]
+        
         self.enable_motors()
 
     # ----------------------
@@ -395,100 +390,15 @@ class RobotController:
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
 
-
-def live_test():
-    controller = RobotController(debug=True)
-    try:
-        target_position = [0.1, 0.1, 0.1]  # Example target position in meters
-        joint_angles = controller.inverse(*target_position)
-        print("Calculated joint angles (deg):", joint_angles)
-        for i, angle in enumerate(joint_angles):
-            if controller.check_limits(angle, controller.motor_ids[i]):
-                controller.move_motor(controller.motor_ids[i], angle)
-        time.sleep(2)  # Wait for movement to complete
-        current_position = controller.read_ee_position()
-        print("Current end-effector position:", current_position)
-    except KeyboardInterrupt:
-        print("\nKeyboard interrupt received, stopping the program.")
-    finally:
-        controller.disable_motors()
-
-
-def sim_test():
-    controller = RobotController(debug=True)
-
-    T = 2.0  # Duration of the trajectory in seconds
-    t = 0.0
-    dt = 0.1  # Time step in seconds
-    while t <= T:
-        coeffs = controller.compute_quintic_coeffs(0, 90, 0, 0, 0, 0, T)
-        theta, theta_dot, theta_ddot = controller.evaluate_quintic(coeffs, t)
-        print(f"t={t:.2f}s: θ={theta:.2f}°, ω={theta_dot:.2f}°/s, α={theta_ddot:.2f}°/s²")
-        t += dt
-        joint_angles = [theta, 0, 0, 0]  # Move only first joint for demo
-        positions = controller.forward(joint_angles)
-        controller.plot_robot(positions)
-        time.sleep(dt)
-
-    plt.show(block=True)
-
-import matplotlib
-matplotlib.use('TkAgg')  # or 'Qt5Agg' if you have PyQt installed
-import matplotlib.pyplot as plt
-
-import numpy as np
-import matplotlib.pyplot as plt
-import numpy as np
-import time
-
-def animate_arm(angles, link_length=93, end_effector_length=50, pause_time=1):
-    # Create figure once
-    fig, ax = plt.subplots(figsize=(6, 6))
-    ax.set_xlim(-3 * link_length, 3 * link_length)
-    ax.set_ylim(-3 * link_length, 3 * link_length)
-    ax.set_aspect('equal', adjustable='box')
-    ax.grid(True)
-    ax.set_title("3-Link Arm Animation")
-
-    # Initialize line objects
-    line1, = ax.plot([], [], 'r-o', linewidth=3, label='Link 1')
-    line2, = ax.plot([], [], 'g-o', linewidth=3, label='Link 2')
-    line3, = ax.plot([], [], 'b-o', linewidth=3, label='Link 3')
-    # line_end_effector, = ax.plot([], [], 'k-o', linewidth=3, label='End Effector')
-
-    ax.legend()
-
-    for t3, t4, t5 in [(a[1], a[2], a[3]) for a in angles]:
-        # Compute cumulative angles in radians, starting from the second angle (t3)
-        theta2 = np.deg2rad(t3)  # First joint angle
-        theta3 = np.deg2rad(t4)  # Second joint angle
-        theta4 = np.deg2rad(t5) # Fourth angle is t5, added to t3 + t4
-
-        # Compute joint positions
-        x0, y0 = 0, 0  # Base (origin)
-        x1 = x0 + link_length * np.cos(theta2)  # End of Link 1
-        y1 = y0 + link_length * np.sin(theta2)
-        x2 = x1 + link_length * np.cos(theta2 + theta3)  # End of Link 2
-        y2 = y1 + link_length * np.sin(theta2 + theta3)
-        x3 = x2 + end_effector_length * np.cos(theta2 + theta3 + theta4)  # End of Link 3 (end effector)
-        y3 = y2 + end_effector_length * np.sin(theta2 + theta3 + theta4)
-
-        # Update plot data for each link
-        line1.set_data([x0, x1], [y0, y1])  # Link 1
-        line2.set_data([x1, x2], [y1, y2])  # Link 2
-        line3.set_data([x2, x3], [y2, y3])
-
-        # print(x2,x3,y2,y3)
-        # print(x3,y3)
+    def move_arm(self, x, y, z, angle=-90,timesetp=0.03,steps = 50):
+        p1,p2,p3,p4 = self.read_joint_angles()
         
-        # Update end effector (make it horizontal and fixed length)
-        # line_end_effector.set_data([x3, end_effector_x], [y3, end_effector_y])
+        p5,p6,p7,p8 = self.inverse_orientation(x,y,z,math.radians(angle))
 
-        plt.pause(pause_time)  # pause to show the update
-
-    # After the animation loop is done, call plt.show() to display the plot window
-    plt.show()
-
+        angles = self.interpolate_angles([p1,p2,p3,p4], [p5,p6,p7,p8], steps, self.smoothstep)
+        for angle_set in angles:
+            self.Move_motor(angle_set)
+            time.sleep(timesetp)
 
 def Problem2(circle_center, angle, radius):
     x = circle_center[0]
@@ -514,50 +424,115 @@ def Problem3():
         time.sleep(0.1)
         positions.append([p1,p2,p3,p4])
 
-    # print(positions)
-    animate_arm(positions,pause_time=1/2)
-
-def test_interpolations(x1,y1,z1,x2,y2,z2,theta=-90):
-    Controller = RobotController(debug=False)
-    p1,p2,p3,p4 = Controller.inverse_orientation(x1,y1,z1,math.radians(theta))
-    p5,p6,p7,p8 = Controller.inverse_orientation(x2,y2,z2,math.radians(theta))
-
-    angles = Controller.interpolate_angles([p1,p2,p3,p4], [p5,p6,p7,p8], 50, Controller.smoothstep)
-    for angle_set in angles:
-        Controller.Move_motor(angle_set)
-        time.sleep(0.05)
+#function to move the robot arm manually by pressing the w,a,s,d,q,e keys and f to return the robots coordinates
+def pressKey(initial_x=0, initial_y=0, initial_z=0):
+    captured_coords = []
     
-
-def test(x,y,z,theta=-90):
+    # Initialize coordinates
+    x = initial_x
+    y = initial_y
+    z = initial_z
+    
+    # Initialize Robot Arm and move to start position
     Controller = RobotController(debug=False)
-    p1,p2,p3,p4 = Controller.inverse_orientation(x,y,z,math.radians(theta))
-    Controller.Move_motor([p1,p2,p3,p4])
+    Controller.move_arm(initial_x, initial_y, initial_z, angle=-90, timesetp=0.02, steps=1)
 
-def calibrate():
+    # --- Listener Callback Functions ---
+    def on_press(key):
+        nonlocal x, y, z, Controller
+        
+        try:
+            key_char = key.char
+        except AttributeError:
+            return
+        
+        # --- Coordinate Movement Logic ---
+        if key_char == 'w':
+            x += 1
+        elif key_char == 's':
+            x -= 1
+        elif key_char == 'a':
+            y += 1
+        elif key_char == 'd':
+            y -= 1
+        elif key_char == 'q':
+            z += 1
+        elif key_char == 'e':
+            z -= 1
+        
+        # --- Data Saving Logic ---
+        elif key_char == 'f':
+            # Store the current coordinates and stop the listener
+            Controller.move_arm(x, y, z, angle=-90, timesetp=0.02, steps=1)
+            captured_coords.append((x, y, z))
+            return False 
+        Controller.move_arm(x, y, z, angle=-90, timesetp=0.02, steps=1)
+        
+            
+    def on_release(key):
+        # Ensure the listener stops if 'esc' is pressed (alternative exit)
+        if key == keyboard.Key.esc:
+            return False
+
+    # --- Main Execution ---
+    with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
+        listener.join()
+    
+    # Return the captured coordinates (the first and only item), or None if it was empty
+    return captured_coords[0] if captured_coords else None
+
+#calls the pressKey function and records the u,v coordinates and the x,y,z coordinates to calculate homography matrix
+def record_calibration_data(centers, chars, home_position=(80,0,130)):
+    pixel_list = []
+    world_xy_list = []
+    
+    # Initialize the last known robot position
+    last_coords = home_position
+
+    # Loop through each detected key
+    for i, (center_uv, char) in enumerate(zip(centers, chars)):
+        u, v = center_uv
+        
+        # Unpack the current starting position
+        start_x, start_y, start_z = last_coords
+
+        print(f"\n MOVE ARM TO TARGET KEY: '{char}' (Pixel: u={u:.2f}, v={v:.2f})")
+        print(f"Arm starting at: X={start_x}, Y={start_y}, Z={start_z}")
+        
+        # Call the blocking, silent function
+        xyz_coords = pressKey(initial_x=start_x, initial_y=start_y, initial_z=start_z)
+        
+        if xyz_coords is None:
+            # User aborted with 'Esc'
+            print("Data collection aborted by user.")
+            break
+        
+        X, Y, Z = xyz_coords
+        last_coords = xyz_coords # Update the last known position
+        
+        # --- Append to Lists ---
+        pixel_list.append([u, v])
+        world_xy_list.append([X, Y]) 
+        
+        print(f"CAPTURED: X={X}, Y={Y}, Z={Z}, ----- character = {char}")
+
+    print("\n--- DATA COLLECTION COMPLETE ---")
+
+    if not pixel_list:
+        return np.array([]), np.array([])
+
+    # Convert lists to NumPy arrays with float32 dtype
+    pixels = np.array(pixel_list, dtype=np.float32)
+    worlds = np.array(world_xy_list, dtype=np.float32)
+
+    return pixels, worlds
+
+#function to type the inputted string
+def Robot_typing(inp):
     Controller = RobotController(debug=False)
-    Controller.enable_motors()
-    Controller.Move_motor([0,0,0,0])
+    theta=-90# controller end effector looking down
+    Controller.move_arm(80,0,130, angle=theta,timesetp=0.03)
 
-def pressKey():
-    pass
-
-def type_test(inp):
-    Controller = RobotController(debug=False)
-    # previous = (100,0,120)
-    # Controller.Move_motor(Controller.inverse_orientation(80,0,130,math.radians(-90)))
-    print(Controller.read_joint_angles())
-    print(Controller.inverse_orientation(80,0,130,math.radians(-90)))
-
-    p1,p2,p3,p4 = Controller.read_joint_angles()
-    p5,p6,p7,p8 = Controller.inverse_orientation(80,0,130,math.radians(-90))
-
-    angles = Controller.interpolate_angles([p1,p2,p3,p4], [p5,p6,p7,p8], 50, Controller.smoothstep)
-    for angle_set in angles:
-        Controller.Move_motor(angle_set)
-        time.sleep(0.05)
-
-
-    theta=-90
     cap = cv2.VideoCapture(0)
     img = None
 
@@ -575,210 +550,75 @@ def type_test(inp):
         else:
             print("Error: Could not capture frame from camera 1.")
 
-    p1,p2,p3,p4 = Controller.inverse_orientation(80,0,130,math.radians(-90))
-    p5,p6,p7,p8 = Controller.inverse_orientation(80,0,20,math.radians(-90))
-
-    angles = Controller.interpolate_angles([p1,p2,p3,p4], [p5,p6,p7,p8], 50, Controller.smoothstep)
-    for angle_set in angles:
-        Controller.Move_motor(angle_set)
-        time.sleep(0.05)
+    # Controller.move_arm(80,0,20, angle=theta,timesetp=0.03)
 
     previous = (80,0,20)
 
     # Release camera resource
     cap.release()
-    x_curr = previous[0]+15
+    x_curr = previous[0]-15
     y_curr = previous[1]
     z_curr = previous[2]
 
     h,angle = get_keyboard(None)
-    x_mov,y_mov,_ = image_to_world_coordinates(img,80,0,130,h[0], h[1])
-    positions = keyboard_key_positions_mm(x_curr+x_mov,y_curr+y_mov, angle)
+    # x_mov,y_mov,_ = image_to_world_coordinates(img,80,0,130,h[0]-9.5, h[1]-9.5)
+    x_mov, y_mov = pixel_to_world_coordinates_homogrphy(h[0],h[1])
+    # positions = keyboard_key_positions_mm(x_curr+x_mov,y_curr+y_mov, angle)
+    positions = keyboard_key_positions_mm(x_mov,y_mov, angle)
+
     print(x_curr+x_mov,y_curr+y_mov, angle)
 
     for letter in inp:
-        print(letter)
+        print("Current Location:",letter)
         current = (positions[letter][0],positions[letter][1],z_curr)
         #move to position
-        p1,p2,p3,p4 = Controller.inverse_orientation(previous[0],previous[1],previous[2],math.radians(theta))
-        p5,p6,p7,p8 = Controller.inverse_orientation(current[0],current[1],current[2],math.radians(theta))
-
-        angles = Controller.interpolate_angles([p1,p2,p3,p4], [p5,p6,p7,p8], 50, Controller.smoothstep)
-        for angle_set in angles:
-            Controller.Move_motor(angle_set)
-            time.sleep(0.03)
+        Controller.move_arm(positions[letter][0],positions[letter][1],z_curr, angle=theta,timesetp=0.02,steps=35)
 
         #press down
-        p1,p2,p3,p4 = Controller.inverse_orientation(current[0],current[1],current[2],math.radians(theta))
-        p5,p6,p7,p8 = Controller.inverse_orientation(current[0],current[1],current[2]-20,math.radians(theta))
-
-        angles = Controller.interpolate_angles([p1,p2,p3,p4], [p5,p6,p7,p8], 10, Controller.smoothstep)
-        for angle_set in angles:
-            Controller.Move_motor(angle_set)
-            time.sleep(0.03)
+        Controller.move_arm(positions[letter][0],positions[letter][1],z_curr-42+positions[letter][2], angle=theta,timesetp=0.005,steps=35)
 
         #move back up
-        p1,p2,p3,p4 = Controller.inverse_orientation(current[0],current[1],current[2]-20,math.radians(theta))
-        p5,p6,p7,p8 = Controller.inverse_orientation(current[0],current[1],current[2],math.radians(theta))
-
-        angles = Controller.interpolate_angles([p1,p2,p3,p4], [p5,p6,p7,p8], 10, Controller.smoothstep)
-        for angle_set in angles:
-            Controller.Move_motor(angle_set)
-            time.sleep(0.03)
-
-        previous = current
-
-
-def camera_calibration():
-    Controller = RobotController(debug=False, DEVICENAME="COM3")
-    p1,p2,p3,p4 = Controller.read_joint_angles()
-    p5,p6,p7,p8 = Controller.inverse_orientation(80,0,20,math.radians(-90))
-
-    angles = Controller.interpolate_angles([p1,p2,p3,p4], [p5,p6,p7,p8], 50, Controller.smoothstep)
-    for angle_set in angles:
-        Controller.Move_motor(angle_set)
-        time.sleep(0.05)
-
-    
-    # Capture img
-    cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
-
-    if not cap.isOpened():
-        print("Error: Cannot open camera")
-        exit()
-
-    ret, frame = cap.read()
-    if not ret:
-        print("Error: Cannot read frame")
-        exit()
-
-    cv2.imshow("Camera Calibration", frame)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-
-    
-    # Move to right pos for pic
-    p1,p2,p3,p4 = Controller.read_joint_angles()
-    p5,p6,p7,p8 = Controller.inverse_orientation(80,0,130,math.radians(-90))
-
-    angles = Controller.interpolate_angles([p1,p2,p3,p4], [p5,p6,p7,p8], 50, Controller.smoothstep)
-    for angle_set in angles:
-        Controller.Move_motor(angle_set)
-        time.sleep(0.05)
-
-    time.sleep(1)
-
-
-    # Take img for detection
-    print("Taking calibration image...")
-    cap.read()
-    ret, frame = cap.read()
-    if not ret:
-        print("Error: Cannot read frame")
-        exit()
-
-    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    cv2.imwrite("keyboard.png",frame_rgb)
-    cv2.imshow("Calibration Image", frame_rgb)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-
-    h,angle = get_keyboard(None)
-    print("Detected keyboard at h:", h, "angle:", angle)
-
-
-
-def cvtest():
-    cap = cv2.VideoCapture(0)
-    saved_frame = None
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        cv2.imshow("Camera", frame)
-        
-        # Save current frame in case we quit
-        saved_frame = frame.copy()
-        
-        # Press 'q' to quit
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            if saved_frame is not None:
-                cv2.imwrite("saved_frame.png", saved_frame)
-                print("Frame saved as saved_frame.png")
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()
+        Controller.move_arm(positions[letter][0],positions[letter][1],z_curr, angle=theta,timesetp=0.005,steps=35)
 
 
 
 def main():
     # Problem3()
-    # endeffector_rotation()
-    # calibrate()
-    # type_test("CLANKER")
-    camera_calibration()
-    # cvtest()
-    # test_interpolations(100,-50,50, 100,50,50)
+    Robot_typing("HELLO WORLD")
 
 
 if __name__ == "__main__":
     main()
-    # test(100,0,0)
-    # cvtest()
+    #next two lines are to manually position the robot arm in 0 position and read the join offsets
+    # Controller = RobotController(debug=False)
+    # print(Controller.read_joint_angles())
 
-    time.sleep(2)
-    '''
-    # Load the H template
-    template = cv2.imread("H.png", cv2.IMREAD_GRAYSCALE)
-    template = cv2.GaussianBlur(template, (3,3), 0)
-    template_edges = cv2.Canny(template, 50, 150)
-    tH, tW = template_edges.shape
+    #for camera and world coordinates, to record data for homography matrix calculation
+    # test(80,0,130)
+    # time.sleep(2)
+    
+    # Controller = RobotController(debug=False)
+    # theta=-90# controller end effector looking down
+    # Controller.move_arm(80,0,130, angle=theta,timesetp=0.03)
 
-    # Open webcam (0 = default camera)
-    cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
+    # cap = cv2.VideoCapture(0)
+    # img = None
 
+    # if not cap.isOpened():
+    #     print("Error: Could not open camera 1.")
+    # else:
+    #     # Capture one frame
+    #     ret, frame = cap.read()
+    #     if ret:
+    #         # Convert from BGR (OpenCV) to RGB (for display)
+    #         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    #         img = frame_rgb
+    #         # Display the image
+    #         cv2.imwrite("keyboard.png",frame_rgb)
+    #     else:
+    #         print("Error: Could not capture frame from camera 1.")
 
-
-    if not cap.isOpened():
-        print("Error: Cannot open camera")
-        exit()
-
-    for _ in range(1):
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5,5), 0)
-        edges = cv2.Canny(blur, 50, 150)
-
-        # Template matching
-        res = cv2.matchTemplate(edges, template_edges, cv2.TM_CCOEFF_NORMED)
-        # Get only max element of res dont use thresholding
-        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-        pt = max_loc
-
-        h = 30
-        vx = (150*(175-h)/175)/600
-
-        x = (245 - pt[1])*vx + 25
-        y = (300 - pt[0])*vx
-        print("x:", x, "y:", y)
-        test(80+x, y, 100)
-        test_interpolations(80+x,y,100, 80+x,y,-20)
-
-        cv2.rectangle(frame, (pt[0], pt[1]), (pt[0] + tW, pt[1] + tH), (0,0,255), 2)
-        cv2.putText(frame, "H", (pt[0], pt[1]-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
-
-        # Show video feed
-        cv2.imshow("H Detection (Press Q to quit)", frame)
-        cv2.imwrite("current_frame.png", frame)
-
-        # Quit on Q key
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()'''
+    # df, centers, chars = detect_all("keyboard.png","testout")
+    # pixels, worlds = record_calibration_data(centers, chars, home_position=(80,0,130))
+    # print(pixels)
+    # print(worlds)
